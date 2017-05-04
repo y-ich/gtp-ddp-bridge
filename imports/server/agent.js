@@ -3,7 +3,7 @@ import { Meteor } from 'meteor/meteor';
 import { GtpLeela, nextMove, cancelById, coord2move, move2coord } from 'meteor/new3rs:gtp-leela';
 import { Rooms } from '/imports/api/rooms/rooms.js';
 
-function setTimeoutPromise(delay) {
+function sleep(delay) {
     return new Promise(function(resolve, reject) {
         setTimeout(function() {
             resolve();
@@ -12,9 +12,9 @@ function setTimeoutPromise(delay) {
 }
 
 export class Agent {
-    constructor(selector, methods = Meteor) {
+    constructor(selector, mode, methods = Meteor) {
+        this.mode = mode;
         this.methods = methods;
-        this.mode = 'serious';
         this.gtp = null;
         this.room = null; // serious modeでroom idを代入するとビジーを示す
         const cursor = Meteor.users.find(selector);
@@ -26,10 +26,12 @@ export class Agent {
             changed: (id, fields) => {
                 if (fields.twiigo && fields.twiigo.request) {
                     if (!this.mode) {
-                        this.methods.call('room.enter', this.methods.call('room.make', id), id);
-                    } else if (this.mode == 'serious' && !this.room) {
+                        this.methods.call('room.enter',
+                            this.methods.call('room.make', id), id);
+                    } else if (this.mode === 'serious' && !this.room) {
                         this.room = id;
-                        this.methods.call('room.enter', this.methods.call('room.make', id), id);
+                        this.methods.call('room.enter',
+                            this.methods.call('room.make', id), id);
                     } else {
                         console.log('already playing');
                     }
@@ -38,11 +40,18 @@ export class Agent {
         });
     }
     async think(id, sgf, byoyomi) {
-        if (this.mode == 'serious') {
+        if (this.mode === 'serious') {
             if (this.gtp) {
                 const [root] = jssgf.fastParse(sgf);
                 const node = jssgf.nthMoveNode(root, Infinity);
-                await this.gtp.play(move2coord(node.B || node.W || '', parseInt(root.SZ || '19'))); // 最後の ||''はパスをundefinedにしないため
+                const size = parseInt(root.SZ || '19');
+                let move;
+                if (node.B != null) {
+                    move = node.B;
+                } else if (node.W != null) {
+                    move = node.W;
+                }
+                await this.gtp.play(move2coord(move, size));
             } else {
                 this.gtp = new GtpLeela();
                 await this.gtp.loadSgf(sgf);
@@ -56,7 +65,7 @@ export class Agent {
         }
     }
     async stopThink(id) {
-        if (this.mode == 'serious') {
+        if (this.mode === 'serious') {
             if (this.gtp) {
                 await this.gtp.terminate();
                 this.gtp = null;
@@ -71,7 +80,7 @@ export class Agent {
         }
         Rooms.update(room._id, { $set: { aiThinking: true }});
         if (delay) {
-            await setTimeoutPromise(delay);
+            await sleep(delay);
         }
         let data;
         while (true) {
@@ -106,12 +115,12 @@ export class Agent {
                 break;
             default: {
                 const next = { _children: [] };
-                next[color] = coord2move(data.move, parseInt(root.SZ != null ? root.SZ : '19'));
+                const size = parseInt(root.SZ || '19')
+                next[color] = coord2move(data.move, size);
                 node._children.push(next);
             }
         }
-        let sgf = jssgf.stringify([root]);
-        this.methods.call('room.updateGame', room._id, sgf);
+        this.methods.call('room.updateGame', room._id, jssgf.stringify([root]));
         data.color = color;
         Rooms.update(room._id, {
             $set: { aiThought: data },
@@ -140,7 +149,7 @@ export class Agent {
         // 挨拶
         if (!(room.greet && room.greet.start && room.greet.start[this.id])) {
             if (room.mates.some(e => e.startsWith(opponentId))) {
-                await setTimeoutPromise(3000);
+                await sleep(3000);
                 this.methods.call('room.greet', room._id, 'start', this.id);
             }
             return;
@@ -154,7 +163,7 @@ export class Agent {
             console.log("behave: end");
             this.stopThink(room._id);
             if (!(room.greet && room.greet.end && room.greet.end[this.id])) {
-                await setTimeoutPromise(3000);
+                await sleep(3000);
                 this.methods.call('room.greet', room._id, 'end', this.id);
                 console.log('behave1');
                 this.methods.call('room.exit', room._id, this.id);
