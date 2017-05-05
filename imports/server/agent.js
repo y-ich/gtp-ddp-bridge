@@ -11,68 +11,43 @@ function sleep(delay) {
     });
 }
 
+/**
+ * ついー碁でプレイするAIエージェント
+ */
 export class Agent {
-    constructor(selector, mode, methods = Meteor) {
-        this.mode = mode;
+    /**
+     * @param {object} selector - Meteor.usersからプレーヤを選択するセレクタ
+     * @param {string} methods - DDPサーバ
+     */
+    constructor(selector, methods = Meteor) {
         this.methods = methods;
-        this.gtp = null;
-        this.room = null; // serious modeでroom idを代入するとビジーを示す
         const cursor = Meteor.users.find(selector);
         if (cursor.count() != 1) {
             throw new Meteor.Error('invalid selector');
         }
         this.id = cursor.fetch()[0]._id;
-        this.observeSelf = cursor.observeChanges({
-            changed: (id, fields) => {
-                if (fields.twiigo && fields.twiigo.request) {
-                    if (!this.mode) {
-                        this.methods.call('room.enter',
-                            this.methods.call('room.make', id), id);
-                    } else if (this.mode === 'serious' && !this.room) {
-                        this.room = id;
-                        this.methods.call('room.enter',
-                            this.methods.call('room.make', id), id);
-                    } else {
-                        console.log('already playing');
-                    }
-                }
-            }
-        });
+        this.userChanged = this.userChanged.bind(this);
+        this.selfObserver = cursor.observeChanges({ changed: this.userChanged });
+    }
+    destroy() {
+        this.selfObserver.stop();
+    }
+    enterRoom(id) {
+        this.methods.call('room.enter', id, this.id);
+        return true;
+    }
+    userChanged(id, fields) {
+        if (!(fields.twiigo && fields.twiigo.request)) {
+            return null;
+        }
+        const roomId = this.methods.call('room.make', this.id);
+        this.enterRoom(roomId);
     }
     async think(id, sgf, byoyomi) {
-        if (this.mode === 'serious') {
-            if (this.gtp) {
-                const [root] = jssgf.fastParse(sgf);
-                const node = jssgf.nthMoveNode(root, Infinity);
-                const size = parseInt(root.SZ || '19');
-                let move;
-                if (node.B != null) {
-                    move = node.B;
-                } else if (node.W != null) {
-                    move = node.W;
-                }
-                await this.gtp.play(move2coord(move, size));
-            } else {
-                this.gtp = new GtpLeela();
-                await this.gtp.loadSgf(sgf);
-                if (byoyomi) {
-                    await this.gtp.timeSettings(0, byoyomi, 1);
-                }
-            }
-            return this.gtp.genmove();
-        } else {
-            return nextMove(id, sgf, byoyomi);
-        }
+        return nextMove(id, sgf, byoyomi);
     }
     async stopThink(id) {
-        if (this.mode === 'serious') {
-            if (this.gtp) {
-                await this.gtp.terminate();
-                this.gtp = null;
-            }
-        } else {
-            cancelById(id);
-        }
+        cancelById(id);
     }
     async play(room, color, root, node, delay) {
         if (room.aiThinking) {
@@ -94,9 +69,9 @@ export class Agent {
                 } else if (e.signal === 'SIGINT') { // terminate
                     Rooms.update(room._id, { $unset: { aiThinking: '' }});
                     throw e;
+                } else {
+                    console.log(e);
                 }
-                console.log(e);
-                this.gtp = null; // retry
             }
         }
         switch (data && data.move) {
@@ -132,15 +107,8 @@ export class Agent {
         // 入室
         if (!room.mates.some(e => e.startsWith(this.id))) {
             if (room.mates.some(e => e.startsWith(opponentId))) {
-                if (this.mode === 'serious') {
-                    if (!this.room) {
-                        this.room = room._id;
-                        this.methods.call('room.enter', room._id, this.id);
-                    } else if (this.room !== room._id) {
-                        return;
-                    }
-                } else {
-                    this.methods.call('room.enter', room._id, this.id);
+                if (!this.enterRoom(room._id)) {
+                    return;
                 }
             }
             return
@@ -227,5 +195,57 @@ export class Agent {
                 this.observer.stop();
             }
         });
+    }
+}
+/**
+ * ポンダーAIエージェント
+ */
+export class PonderAgent extends Agent {
+    enterRoom(id) {
+        if (this.room && this.room !== id) {
+            console.log('already playing');
+            return false;
+        }
+        this.room = id;
+        return super.enterRoom(id);
+    }
+    userChanged(id, fields) {
+        if (this.room) {
+            console.log('already playing');
+            return;
+        }
+        super.userChanged(id, fields);
+    }
+    async think(id, sgf, byoyomi) {
+        try {
+            if (this.gtp) {
+                const [root] = jssgf.fastParse(sgf);
+                const node = jssgf.nthMoveNode(root, Infinity);
+                const size = parseInt(root.SZ || '19');
+                let move;
+                if (node.B != null) {
+                    move = node.B;
+                } else if (node.W != null) {
+                    move = node.W;
+                }
+                await this.gtp.play(move2coord(move, size));
+            } else {
+                this.gtp = new GtpLeela();
+                await this.gtp.loadSgf(sgf);
+                if (byoyomi) {
+                    await this.gtp.timeSettings(0, byoyomi, 1);
+                }
+            }
+            return this.gtp.genmove();
+        } catch(e) {
+            this.gtp = null;
+            throw e;
+        }
+    }
+    async stopThink(id) {
+        if (this.gtp) {
+            await this.gtp.terminate();
+            this.gtp = null;
+        }
     }
 }
