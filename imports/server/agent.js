@@ -27,6 +27,7 @@ export class Agent {
         }
         this.id = this.user.fetch()[0]._id;
         this.userChanged = this.userChanged.bind(this);
+        this.rooms = Rooms.find(this.getRoomsSelector());
     }
     destroy() {
         this.selfObserver.stop();
@@ -34,6 +35,15 @@ export class Agent {
     enterRoom(id) {
         this.methods.call('room.enter', id, this.id);
         return true;
+    }
+    exitRoom(id) {
+        this.methods.call('room.exit', id, this.id);
+        return true;
+    }
+    exitAllRooms() {
+        this.rooms.forEach(room => {
+            this.exitRoom(room._id);
+        });
     }
     userChanged(id, fields) {
         if (!(fields.twiigo && fields.twiigo.request)) {
@@ -133,8 +143,7 @@ export class Agent {
                 await sleep(3000);
                 this.methods.call('room.greet', room._id, 'end', this.id);
                 console.log('behave1');
-                this.methods.call('room.exit', room._id, this.id);
-                this.room = null;
+                this.exitRoom(room._id);
             }
         } else if (root._children.length === 0) {
             const whiteSen = root.HA && parseInt(root.HA) >= 2;
@@ -144,8 +153,7 @@ export class Agent {
                 console.log("behave: opponent left room before first move");
                 this.stopThink(room._id);
                 console.log('behave2');
-                this.methods.call('room.exit', room._id, this.id);
-                this.room = null;
+                this.exitRoom(room._id);
             }
         } else {
             const node = jssgf.nthMoveNode(root, Infinity);
@@ -154,8 +162,7 @@ export class Agent {
                     console.log("behave: opponent left room on the way");
                     this.stopThink();
                     console.log('behave3');
-                    this.methods.call('room.exit', room._id, this.id);
-                    this.room = null;
+                    this.exitRoom(room._id);
                 }
             } else {
                 await this.play(room, color, root, node);
@@ -182,7 +189,7 @@ export class Agent {
                 console.log(reason);
             });
         }
-        this.roomObserver = Rooms.find(this.getRoomsSelector()).observe({
+        this.roomObserver = this.rooms.observe({
             added: handler,
             changed: handler
         });
@@ -197,6 +204,7 @@ export class Agent {
             if (this.roomObserver) {
                 this.roomObserver.stop();
             }
+            this.exitAllRooms();
         });
     }
 }
@@ -211,6 +219,14 @@ export class PonderAgent extends Agent {
         }
         this.room = id;
         return super.enterRoom(id);
+    }
+    exitRoom(id) {
+        this.room = null;
+        return super.exitRoom(id);
+    }
+    exitAllRooms() {
+        this.exitRoom(this.room);
+        this.room = null;
     }
     userChanged(id, fields) {
         if (this.room) {
