@@ -21,13 +21,12 @@ export class Agent {
      */
     constructor(selector, methods = Meteor) {
         this.methods = methods;
-        const cursor = Meteor.users.find(selector);
-        if (cursor.count() != 1) {
+        this.user = Meteor.users.find(selector);
+        if (this.user.count() != 1) {
             throw new Meteor.Error('invalid selector');
         }
-        this.id = cursor.fetch()[0]._id;
+        this.id = this.user.fetch()[0]._id;
         this.userChanged = this.userChanged.bind(this);
-        this.selfObserver = cursor.observeChanges({ changed: this.userChanged });
     }
     destroy() {
         this.selfObserver.stop();
@@ -177,12 +176,13 @@ export class Agent {
     }
     observe() {
         console.log('observe');
+        this.selfObserver = this.user.observeChanges({ changed: this.userChanged });
         const handler = (room, old) => {
             this.behave(room, old).catch(function (reason) {
                 console.log(reason);
             });
         }
-        this.observer = Rooms.find(this.getRoomsSelector()).observe({
+        this.roomObserver = Rooms.find(this.getRoomsSelector()).observe({
             added: handler,
             changed: handler
         });
@@ -191,8 +191,11 @@ export class Agent {
         console.log('stopObserve');
         this.stopThink();
         Meteor.defer(() => {
-            if (this.observer) {
-                this.observer.stop();
+            if (this.selfObserver) {
+                this.selfObserver.stop();
+            }
+            if (this.roomObserver) {
+                this.roomObserver.stop();
             }
         });
     }
@@ -203,7 +206,7 @@ export class Agent {
 export class PonderAgent extends Agent {
     enterRoom(id) {
         if (this.room && this.room !== id) {
-            console.log('already playing');
+            console.log('already playing other game', this.room, id);
             return false;
         }
         this.room = id;
