@@ -1,6 +1,7 @@
 import jssgf from 'jssgf';
 import { Meteor } from 'meteor/meteor';
-import { GtpLeela, nextMove, cancelById, coord2move, move2coord } from 'meteor/new3rs:gtp-leela';
+import { GtpLeela, nextMove, cancelById, coord2move, move2coord }
+    from 'meteor/new3rs:gtp-leela';
 import { Rooms } from '/imports/api/rooms/rooms.js';
 
 function sleep(delay) {
@@ -28,9 +29,10 @@ export class Agent {
         this.id = this.user.fetch()[0]._id;
         this.userChanged = this.userChanged.bind(this);
         this.rooms = Rooms.find(this.getRoomsSelector());
+        this.thinkingRooms = [];
     }
     destroy() {
-        this.selfObserver.stop();
+        this.stopObserve();
     }
     enterRoom(id) {
         this.methods.call('room.enter', id, this.id);
@@ -52,6 +54,13 @@ export class Agent {
         const roomId = this.methods.call('room.make', this.id);
         this.enterRoom(roomId);
     }
+    removeFromThinkingRooms(roomId) {
+        const index = this.thinkingRooms.indexOf(roomId);
+        if (index < 0) {
+            return;
+        }
+        this.thinkingRooms.splice(index, 1);
+    }
     async think(id, sgf, byoyomi) {
         return nextMove(id, sgf, byoyomi);
     }
@@ -59,10 +68,10 @@ export class Agent {
         cancelById(id);
     }
     async play(room, color, root, node, delay) {
-        if (room.aiThinking) {
+        if (this.thinkingRooms.includes(room._id)) {
             return
         }
-        Rooms.update(room._id, { $set: { aiThinking: true }});
+        this.thinkingRooms.push(room._id);
         if (delay) {
             await sleep(delay);
         }
@@ -73,7 +82,7 @@ export class Agent {
                     process.env.NODE_ENV === 'production' ? 15 : 1);
                 break;
             } catch (e) {
-                Rooms.update(room._id, { $unset: { aiThinking: '' }});
+                this.removeFromThinkingRooms(room._id);
                 if (e.message === 'This socket is closed.') {
                     throw new Error('no gtp command', 'COMMAND not found');
                 } else if (e.signal === 'SIGINT') { // terminate
@@ -106,10 +115,8 @@ export class Agent {
         }
         this.methods.call('room.updateGame', room._id, jssgf.stringify([root]));
         data.color = color;
-        Rooms.update(room._id, {
-            $set: { aiThought: data },
-            $unset: { aiThinking: '' }
-        });
+        this.removeFromThinkingRooms(room._id);
+        Rooms.update(room._id, { $set: { aiThought: data }});
     }
     async behave(room, old) {
         const opponentId = room.black === this.id ? room.white : room.black;
