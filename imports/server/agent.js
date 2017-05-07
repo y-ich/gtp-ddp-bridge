@@ -6,9 +6,7 @@ import { Rooms } from '/imports/api/rooms/rooms.js';
 
 function sleep(delay) {
     return new Promise(function(resolve, reject) {
-        setTimeout(function() {
-            resolve();
-        }, delay);
+        setTimeout(resolve, delay);
     });
 }
 
