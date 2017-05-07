@@ -73,10 +73,10 @@ export class Agent {
                     process.env.NODE_ENV === 'production' ? 15 : 1);
                 break;
             } catch (e) {
+                Rooms.update(room._id, { $unset: { aiThinking: '' }});
                 if (e.message === 'This socket is closed.') {
                     throw new Error('no gtp command', 'COMMAND not found');
                 } else if (e.signal === 'SIGINT') { // terminate
-                    Rooms.update(room._id, { $unset: { aiThinking: '' }});
                     throw e;
                 } else {
                     console.log(e);
