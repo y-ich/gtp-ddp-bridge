@@ -37,7 +37,7 @@ modules@0.8.2
 modules-runtime@0.7.10
 mongo@1.1.17
 mongo-id@1.0.6
-new3rs:gtp-leela@0.0.13
+new3rs:gtp-leela@0.0.18
 npm-mongo@2.2.24
 observe-sequence@1.0.16
 ordered-dict@1.0.9
